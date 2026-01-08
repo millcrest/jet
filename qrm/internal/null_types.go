@@ -356,6 +356,18 @@ func (ns *NullString) Scan(value interface{}) error {
 			ns.Valid = true
 			return nil
 		}
+	case reflect.Array:
+		// Handle [16]byte (UUID) -> string conversion
+		if v.Type().Elem().Kind() == reflect.Uint8 && v.Len() == 16 {
+			bytes := make([]byte, 16)
+			for i := range 16 {
+				bytes[i] = byte(v.Index(i).Uint())
+			}
+			ns.String = fmt.Sprintf("%x-%x-%x-%x-%x",
+				bytes[0:4], bytes[4:6], bytes[6:8], bytes[8:10], bytes[10:16])
+			ns.Valid = true
+			return nil
+		}
 	}
 
 	// Last resort: use fmt.Sprintf to convert to string

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/go-jet/jet/v2/internal/testutils"
+	"github.com/go-jet/jet/v2/internal/utils/ptr"
 	"github.com/go-jet/jet/v2/pgxV5"
 	. "github.com/go-jet/jet/v2/postgres"
 	model3 "github.com/go-jet/jet/v2/tests/.gentestdata/pgx/jetdb/dvds/model"
@@ -114,7 +115,34 @@ WHERE all_types.uuid = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'::uuid;
 	requireLogged(t, stmt)
 
 	require.Equal(t, result.UUID, uuid.MustParse("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11"))
-	testutils.AssertDeepEqual(t, result.UUIDPtr, testutils.UUIDPtr("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11"))
+	testutils.AssertDeepEqual(t, result.UUIDPtr.UUID, uuid.MustParse("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11"))
+}
+
+func TestUUIDStringTypePGX(t *testing.T) {
+	id := uuid.MustParse("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11")
+
+	stmt := SELECT(table.AllTypes.UUID.AS("uuid"), table.AllTypes.UUIDPtr.AS("uuid_ptr")).
+		FROM(table.AllTypes).
+		WHERE(table.AllTypes.UUID.EQ(UUID(id)))
+
+	testutils.AssertDebugStatementSql(t, stmt, `
+SELECT all_types.uuid AS "uuid",
+     all_types.uuid_ptr AS "uuid_ptr"
+FROM test_sample.all_types
+WHERE all_types.uuid = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'::uuid;
+`, "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11")
+
+	var result = struct {
+		UUID    string
+		UUIDPtr *string
+	}{}
+
+	err := pgxV5.Query(ctx, stmt, pgxPool, &result)
+	require.NoError(t, err)
+	requireLogged(t, stmt)
+
+	require.Equal(t, uuid.MustParse("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11").String(), result.UUID)
+	testutils.AssertDeepEqual(t, result.UUIDPtr, ptr.Of(testutils.UUIDPtr("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11").String()))
 }
 
 func TestNullUUIDTypePGX(t *testing.T) {
