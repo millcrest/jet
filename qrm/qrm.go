@@ -7,8 +7,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/go-jet/jet/v2/internal/utils/must"
 	"reflect"
+
+	"github.com/go-jet/jet/v2/internal/utils/must"
+	"github.com/go-jet/jet/v2/qrm/internal"
 )
 
 // Config holds the configuration settings for QRM scanning behavior.
@@ -421,6 +423,14 @@ func mapRowToStruct(
 
 				if pgxUUIDPatch(fieldValue, scannedValue) {
 					continue
+				}
+
+				// Check if the source is []interface{} (pgx array) and destination is a slice type
+				// If so, try to convert directly before falling back to Scanner
+				if _, isInterfaceSlice := value.([]interface{}); isInterfaceSlice {
+					if internal.TryConvertInterfaceSlice(value, fieldValue) {
+						continue
+					}
 				}
 
 				if valuer, ok := value.(driver.Valuer); ok {

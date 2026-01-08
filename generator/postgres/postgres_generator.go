@@ -26,6 +26,12 @@ type DBConnection struct {
 	SchemaName string
 }
 
+var usePgx bool
+
+func SetUsePgx(value bool) {
+	usePgx = value
+}
+
 // Generate generates jet files at destination dir from database connection details
 func Generate(destDir string, dbConn DBConnection, genTemplate ...template.Template) (err error) {
 	dsn := fmt.Sprintf("postgresql://%s:%s@%s:%s/%s?sslmode=%s",
@@ -66,7 +72,7 @@ func GenerateDB(db *sql.DB, schema, destDir string, templates ...template.Templa
 		generatorTemplate = templates[0]
 	}
 
-	schemaMetadata, err := metadata.GetSchema(db, &postgresQuerySet{}, schema)
+	schemaMetadata, err := metadata.GetSchema(db, &postgresQuerySet{usePgx: usePgx}, schema)
 	if err != nil {
 		return fmt.Errorf("failed to get '%s' schema metadata: %w", schema, err)
 	}

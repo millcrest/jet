@@ -46,6 +46,7 @@ var (
 
 	skipModel      bool
 	skipSQLBuilder bool
+	usePgx         bool
 
 	destDir  string
 	modelPkg string
@@ -91,6 +92,7 @@ func init() {
 	flag.StringVar(&ignoreEnums, "ignore-enums", "", `Comma-separated list of enums to ignore.`)
 	flag.BoolVar(&skipModel, "skip-model", false, `Skip model generation.`)
 	flag.BoolVar(&skipSQLBuilder, "skip-sql-builder", false, `Skip SQL builder generation.`)
+	flag.BoolVar(&usePgx, "pgx", false, `Use PGX model types`)
 
 	flag.StringVar(&destDir, "path", "", "Destination directory for files generated.")
 	flag.StringVar(&modelPkg, "rel-model-path", "model", "Relative path for the Model files package from the destination directory.")
@@ -126,6 +128,7 @@ func main() {
 	switch source {
 	case "postgresql", "postgres", "cockroachdb", "cockroach":
 		generatorTemplate := genTemplate(postgres2.Dialect, tablesFilter, viewsFilter, enumsFilter)
+		postgresgen.SetUsePgx(usePgx)
 
 		if dsn != "" {
 			err = postgresgen.GenerateDSN(dsn, schemaName, destDir, generatorTemplate)

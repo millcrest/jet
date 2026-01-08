@@ -3,9 +3,10 @@ package qrm
 import (
 	"database/sql"
 	"fmt"
-	"github.com/jackc/pgx/v5"
 	"reflect"
 	"strings"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // ScanContext  contains information about current row processed, mapping from the row to the

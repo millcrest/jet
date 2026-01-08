@@ -26,6 +26,7 @@ const (
 type DataType struct {
 	Name       string
 	Kind       DataTypeKind
+	UsePgx     bool
 	IsUnsigned bool
 	Dimensions int // The number of array dimensions
 }
