@@ -490,6 +490,18 @@ func pgxUUIDPatch(fieldValue, value reflect.Value) bool {
 		return false
 	}
 
+	// Handle uuid.NullUUID (struct with UUID and Valid fields)
+	if value.Type() == uuidLikeType && fieldValue.Kind() == reflect.Struct {
+		uuidField := fieldValue.FieldByName("UUID")
+		validField := fieldValue.FieldByName("Valid")
+		if uuidField.IsValid() && uuidField.CanSet() &&
+			validField.IsValid() && validField.CanSet() && validField.Kind() == reflect.Bool {
+			uuidField.Set(value)
+			validField.SetBool(true)
+			return true
+		}
+	}
+
 	if !fieldValue.CanSet() {
 		return false
 	}

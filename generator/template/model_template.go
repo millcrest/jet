@@ -299,6 +299,8 @@ func getGoType(column metadata.Column) interface{} {
 			switch t := goType.(type) {
 			case []byte:
 				return goType
+			case uuid.UUID:
+				return uuid.NullUUID{}
 			case Type:
 				t.Name = "*" + t.Name
 				return t

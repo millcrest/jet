@@ -117,6 +117,30 @@ WHERE all_types.uuid = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'::uuid;
 	testutils.AssertDeepEqual(t, result.UUIDPtr, testutils.UUIDPtr("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11"))
 }
 
+func TestNullUUIDTypePGX(t *testing.T) {
+	id := uuid.MustParse("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11")
+
+	stmt := SELECT(table.AllTypes.UUID, table.AllTypes.UUIDPtr).
+		FROM(table.AllTypes).
+		WHERE(table.AllTypes.UUID.EQ(UUID(id)))
+
+	testutils.AssertDebugStatementSql(t, stmt, `
+SELECT all_types.uuid AS "all_types.uuid",
+     all_types.uuid_ptr AS "all_types.uuid_ptr"
+FROM test_sample.all_types
+WHERE all_types.uuid = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'::uuid;
+`, "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11")
+
+	result := model2.AllTypes{}
+
+	err := pgxV5.Query(ctx, stmt, pgxPool, &result)
+	require.NoError(t, err)
+	requireLogged(t, stmt)
+
+	require.Equal(t, result.UUID, uuid.MustParse("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11"))
+	testutils.AssertDeepEqual(t, result.UUIDPtr.UUID, uuid.MustParse("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11"))
+}
+
 func TestPGXScannerType(t *testing.T) {
 
 	type floats struct {
