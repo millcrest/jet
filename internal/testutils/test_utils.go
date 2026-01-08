@@ -5,19 +5,22 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
+	"runtime"
+	"testing"
+	"time"
+
 	"github.com/go-jet/jet/v2/internal/jet"
 	"github.com/go-jet/jet/v2/internal/utils/throw"
 	"github.com/go-jet/jet/v2/qrm"
 	"github.com/go-jet/jet/v2/stmtcache"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"os"
-	"path/filepath"
-	"runtime"
-	"testing"
-	"time"
 )
 
 // UnixTimeComparer will compare time equality while ignoring time zone
@@ -69,6 +72,17 @@ func ExecuteInTxAndRollback(t *testing.T, db *stmtcache.DB, f func(tx qrm.DB)) {
 	require.NoError(t, err)
 	defer func() {
 		err := tx.Rollback()
+		require.NoError(t, err)
+	}()
+
+	f(tx)
+}
+
+func ExecuteInPgxTxAndRollback(t *testing.T, ctx context.Context, pgxPool *pgxpool.Pool, f func(tx pgx.Tx)) {
+	tx, err := pgxPool.Begin(ctx)
+	require.NoError(t, err)
+	defer func() {
+		err := tx.Rollback(ctx)
 		require.NoError(t, err)
 	}()
 

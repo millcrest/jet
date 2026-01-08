@@ -2,14 +2,16 @@ package template
 
 import (
 	"fmt"
-	"github.com/lib/pq"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"time"
 
+	"github.com/lib/pq"
+
 	"github.com/google/uuid"
 	"github.com/jackc/pgtype"
+	pgtypev5 "github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/go-jet/jet/v2/generator/metadata"
 	"github.com/go-jet/jet/v2/internal/utils/dbidentifier"
@@ -223,15 +225,21 @@ type Type struct {
 
 // NewType creates new type for dummy object
 func NewType(dummyObject interface{}) Type {
-	return Type{
-		ImportPath: getImportPath(dummyObject),
-		Name:       getTypeName(dummyObject),
+	switch t := dummyObject.(type) {
+	case Type:
+		return t
+	default:
+		return Type{
+			ImportPath: getImportPath(dummyObject),
+			Name:       getTypeName(dummyObject),
+		}
 	}
 }
 
 func getTypeName(t interface{}) string {
 	typeStr := reflect.TypeOf(t).String()
-	typeStr = strings.Replace(typeStr, "[]uint8", "[]byte", -1)
+	typeStr = strings.ReplaceAll(typeStr, "[]uint8", "[]byte")
+	typeStr = strings.ReplaceAll(typeStr, "github.com/jackc/pgx/v5/pgtype", "pgtype")
 
 	return typeStr
 }
@@ -287,6 +295,17 @@ func getGoType(column metadata.Column) interface{} {
 	}
 
 	if column.IsNullable {
+		if column.DataType.UsePgx {
+			switch t := goType.(type) {
+			case []byte:
+				return goType
+			case uuid.UUID:
+				return uuid.NullUUID{}
+			case Type:
+				t.Name = "*" + t.Name
+				return t
+			}
+		}
 		return reflect.New(reflect.TypeOf(goType)).Interface()
 	}
 
@@ -318,8 +337,8 @@ func toGoArrayType(elemType any, column metadata.Column) any {
 
 // toGoType returns model type for column info.
 func toGoType(column metadata.Column) interface{} {
-
-	switch strings.ToLower(column.DataType.Name) {
+	t := strings.ToLower(column.DataType.Name)
+	switch t {
 	case "user-defined", "enum":
 		return ""
 	case "boolean", "bool":
@@ -352,16 +371,50 @@ func toGoType(column metadata.Column) interface{} {
 		"time without time zone", "time",
 		"time with time zone", "timetz",
 		"datetime": // MySQL
+		if column.DataType.UsePgx {
+			if t == "timestamp with time zone" || t == "timestamptz" {
+				return pgtypev5.Timestamptz{}
+			}
+			if t == "timestamp without time zone" || t == "timestamp" {
+				return pgtypev5.Timestamp{}
+			}
+			if t == "date" {
+				return pgtypev5.Date{}
+			}
+			if t == "time with time zone" || t == "timetz" {
+				// pgtype.Time doesn't parse timetz properly https://github.com/jackc/pgx/issues/1940
+				return ""
+			}
+			return pgtypev5.Time{}
+		}
 		return time.Time{}
+	case "interval":
+		if column.DataType.UsePgx {
+			return pgtypev5.Interval{}
+		}
+		return ""
 	case "bytea",
 		"binary", "varbinary", "tinyblob", "blob", "mediumblob", "longblob": //MySQL
 		return []byte("")
+	case "bit", "bit varying", "varbit":
+		if column.DataType.UsePgx {
+			return pgtypev5.Bits{}
+		}
+		return ""
+	case "point":
+		if column.DataType.UsePgx {
+			return pgtypev5.Point{}
+		}
+		return ""
+	case "json", "jsonb", "line":
+		if column.DataType.UsePgx {
+			return []byte("")
+		}
+		return ""
 	case "text",
 		"character", "bpchar",
 		"character varying", "varchar", "nvarchar",
-		"tsvector", "bit", "bit varying", "varbit",
-		"money", "json", "jsonb",
-		"xml", "point", "interval", "line", "array",
+		"tsvector", "money", "xml", "array",
 		"char", "tinytext", "mediumtext", "longtext": // MySQL
 		return ""
 	case "real", "float4":
@@ -373,16 +426,34 @@ func toGoType(column metadata.Column) interface{} {
 	case "uuid":
 		return uuid.UUID{}
 	case "daterange":
+		if column.DataType.UsePgx {
+			return pgtypev5.Range[pgtypev5.Date]{}
+		}
 		return pgtype.Daterange{}
 	case "tsrange":
+		if column.DataType.UsePgx {
+			return pgtypev5.Range[pgtypev5.Timestamp]{}
+		}
 		return pgtype.Tsrange{}
 	case "tstzrange":
+		if column.DataType.UsePgx {
+			return pgtypev5.Range[pgtypev5.Timestamptz]{}
+		}
 		return pgtype.Tstzrange{}
 	case "int4range":
+		if column.DataType.UsePgx {
+			return pgtypev5.Range[pgtypev5.Int4]{}
+		}
 		return pgtype.Int4range{}
 	case "int8range":
+		if column.DataType.UsePgx {
+			return pgtypev5.Range[pgtypev5.Int8]{}
+		}
 		return pgtype.Int8range{}
 	case "numrange":
+		if column.DataType.UsePgx {
+			return pgtypev5.Range[pgtypev5.Numeric]{}
+		}
 		return pgtype.Numrange{}
 	default:
 		fmt.Println("- [Model      ] Unsupported sql column '" + column.Name + " " + column.DataType.Name + "', using string instead.")

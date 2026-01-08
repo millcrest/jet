@@ -3,13 +3,14 @@ package qrm
 import (
 	"database/sql"
 	"fmt"
+	"reflect"
+	"strings"
+	"time"
+
 	"github.com/go-jet/jet/v2/internal/utils/must"
 	"github.com/go-jet/jet/v2/internal/utils/strslice"
 	"github.com/go-jet/jet/v2/qrm/internal"
 	"github.com/google/uuid"
-	"reflect"
-	"strings"
-	"time"
 )
 
 var scannerInterfaceType = reflect.TypeOf((*sql.Scanner)(nil)).Elem()
@@ -226,7 +227,7 @@ func tryAssign(source, destination reflect.Value) error {
 		destination.SetBool(nullBool.Bool)
 
 	case reflect.Float32, reflect.Float64:
-		var nullFloat sql.NullFloat64
+		var nullFloat internal.NullFloat64
 
 		err := nullFloat.Scan(sourceInterface)
 		if err != nil {
@@ -262,7 +263,7 @@ func tryAssign(source, destination reflect.Value) error {
 		}
 
 	case reflect.String:
-		var str sql.NullString
+		var str internal.NullString
 
 		err := str.Scan(sourceInterface)
 		if err != nil {
@@ -286,6 +287,14 @@ func tryAssign(source, destination reflect.Value) error {
 			if nullTime.Valid {
 				destination.Set(reflect.ValueOf(nullTime.Time))
 			}
+		case []byte:
+			// Handle map/slice -> []byte by marshaling to JSON
+			// This is needed when pgx returns parsed JSON (map/slice) but destination expects raw bytes
+			if data, ok := internal.TryMarshalToJSONBytes(sourceInterface); ok {
+				destination.SetBytes(data)
+				return nil
+			}
+			return fmt.Errorf("can't assign %T to %T", sourceInterface, destination.Interface())
 		default:
 			return fmt.Errorf("can't assign %T to %T", sourceInterface, destination.Interface())
 		}

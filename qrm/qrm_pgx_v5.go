@@ -3,14 +3,21 @@ package qrm
 import (
 	"context"
 	"fmt"
+	"reflect"
+
 	"github.com/go-jet/jet/v2/internal/utils/must"
 	"github.com/jackc/pgx/v5"
-	"reflect"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // QueryablePgxV5 interface for pgx Query method
 type QueryablePgxV5 interface {
 	Query(ctx context.Context, query string, args ...any) (pgx.Rows, error)
+}
+
+// ExecutablePgxV5 interface for pgx Exec method
+type ExecutablePgxV5 interface {
+	Exec(ctx context.Context, query string, args ...any) (pgconn.CommandTag, error)
 }
 
 // QueryJsonObjPgxV5 executes a SQL query that returns a JSON object, unmarshals the result into the provided destination,
@@ -205,4 +212,21 @@ func queryJsonPgxV5(ctx context.Context, db QueryablePgxV5, query string, args [
 	rows.Close()
 
 	return 1, nil
+}
+
+// ExecPgxV5 executes a statement that doesn't return rows (INSERT, UPDATE, DELETE)
+// using a pgx v5 connection and returns the command tag with affected row count.
+func ExecPgxV5(ctx context.Context, db ExecutablePgxV5, query string, args []interface{}) (rowsAffected int64, err error) {
+	must.BeInitializedPtr(db, "jet: db is nil")
+
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	commandTag, err := db.Exec(ctx, query, args...)
+	if err != nil {
+		return 0, err
+	}
+
+	return commandTag.RowsAffected(), nil
 }

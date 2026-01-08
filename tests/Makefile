@@ -32,7 +32,7 @@ init-sqlite:
 	go run ./init/init.go -testsuite sqlite
 
 # jet-gen will call generator on each of the test databases to generate sql builder and model files need to run the tests.
-jet-gen-all: install-jet-gen jet-gen-postgres jet-gen-mysql jet-gen-mariadb jet-gen-sqlite
+jet-gen-all: install-jet-gen jet-gen-postgres jet-gen-pgx jet-gen-mysql jet-gen-mariadb jet-gen-sqlite
 
 ifeq ($(OS),Windows_NT)
     target := jet.exe
@@ -49,6 +49,13 @@ jet-gen-postgres:
 	jet -dsn=postgres://jet:jet@localhost:50901/jetdb?sslmode=disable -schema=chinook2  -path=./.gentestdata/
 	jet -dsn=postgres://jet:jet@localhost:50901/jetdb?sslmode=disable -schema=northwind  -path=./.gentestdata/
 	jet -dsn=postgres://jet:jet@localhost:50901/jetdb?sslmode=disable -schema=test_sample  -path=./.gentestdata/
+
+jet-gen-pgx:
+	jet -dsn=postgres://jet:jet@localhost:50901/jetdb?sslmode=disable -schema=dvds -pgx -path=./.gentestdata/pgx/
+	jet -dsn=postgres://jet:jet@localhost:50901/jetdb?sslmode=disable -schema=chinook -pgx -path=./.gentestdata/pgx/
+	jet -dsn=postgres://jet:jet@localhost:50901/jetdb?sslmode=disable -schema=chinook2 -pgx -path=./.gentestdata/pgx/
+	jet -dsn=postgres://jet:jet@localhost:50901/jetdb?sslmode=disable -schema=northwind -pgx -path=./.gentestdata/pgx/
+	jet -dsn=postgres://jet:jet@localhost:50901/jetdb?sslmode=disable -schema=test_sample -pgx -path=./.gentestdata/pgx/
 
 jet-gen-mysql:
 	jet -source=mysql -dsn="jet:jet@tcp(localhost:50902)/dvds" -path=./.gentestdata/mysql

@@ -10,7 +10,9 @@ import (
 )
 
 // postgresQuerySet is dialect query set for PostgreSQL
-type postgresQuerySet struct{}
+type postgresQuerySet struct {
+	usePgx bool
+}
 
 func (p postgresQuerySet) GetTablesMetaData(db *sql.DB, schemaName string, tableType metadata.TableType) ([]metadata.Table, error) {
 	query := `
@@ -44,7 +46,7 @@ ORDER BY table_name;
 	}
 
 	for i := range tables {
-		tables[i].Columns, err = getColumnsMetaData(db, schemaName, tables[i].Name)
+		tables[i].Columns, err = getColumnsMetaData(db, schemaName, tables[i].Name, p.usePgx)
 		if err != nil {
 			return nil, fmt.Errorf("failed to query %s columns metadata: %w", tableType, err)
 		}
@@ -53,8 +55,8 @@ ORDER BY table_name;
 	return tables, nil
 }
 
-func getColumnsMetaData(db *sql.DB, schemaName string, tableName string) ([]metadata.Column, error) {
-	query := `
+func getColumnsMetaData(db *sql.DB, schemaName string, tableName string, usePgx bool) ([]metadata.Column, error) {
+	query := fmt.Sprintf(`
 select  
     attr.attname as "column.Name",
     col_description(attr.attrelid, attr.attnum) as "column.Comment",
@@ -79,6 +81,7 @@ select
           when tp.typcategory = 'A' then elem.typname
           else tp.typname
         end) as "dataType.Name",
+	%t as "dataType.usePgx",
     false as "dataType.isUnsigned"
 from pg_catalog.pg_attribute as attr
      join pg_catalog.pg_class as cls on cls.oid = attr.attrelid
@@ -92,7 +95,8 @@ where
     attr.attnum > 0
 order by 
     attr.attnum;
-`
+`, usePgx)
+
 	var columns []metadata.Column
 	_, err := qrm.Query(context.Background(), db, query, []interface{}{schemaName, tableName}, &columns)
 	if err != nil {

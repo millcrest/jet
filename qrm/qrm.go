@@ -7,8 +7,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/go-jet/jet/v2/internal/utils/must"
 	"reflect"
+
+	"github.com/go-jet/jet/v2/internal/utils/must"
+	"github.com/go-jet/jet/v2/qrm/internal"
 )
 
 // Config holds the configuration settings for QRM scanning behavior.
@@ -423,6 +425,14 @@ func mapRowToStruct(
 					continue
 				}
 
+				// Check if the source is []interface{} (pgx array) and destination is a slice type
+				// If so, try to convert directly before falling back to Scanner
+				if _, isInterfaceSlice := value.([]interface{}); isInterfaceSlice {
+					if internal.TryConvertInterfaceSlice(value, fieldValue) {
+						continue
+					}
+				}
+
 				if valuer, ok := value.(driver.Valuer); ok {
 					value, err = valuer.Value()
 
@@ -478,6 +488,18 @@ func pgxUUIDPatch(fieldValue, value reflect.Value) bool {
 
 	if fieldValue.Type() != uuidLikeType && value.Type() != uuidLikeType {
 		return false
+	}
+
+	// Handle uuid.NullUUID (struct with UUID and Valid fields)
+	if value.Type() == uuidLikeType && fieldValue.Kind() == reflect.Struct {
+		uuidField := fieldValue.FieldByName("UUID")
+		validField := fieldValue.FieldByName("Valid")
+		if uuidField.IsValid() && uuidField.CanSet() &&
+			validField.IsValid() && validField.CanSet() && validField.Kind() == reflect.Bool {
+			uuidField.Set(value)
+			validField.SetBool(true)
+			return true
+		}
 	}
 
 	if !fieldValue.CanSet() {

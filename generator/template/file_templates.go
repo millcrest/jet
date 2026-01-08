@@ -153,7 +153,10 @@ var {{enumTemplate.InstanceName}} = &struct {
 var enumModelTemplate = `package {{package}}
 {{- $enumTemplate := enumTemplate}}
 
-import "errors"
+import (
+	"errors"
+	"fmt"
+)
 
 {{golangComment .Comment}}
 type {{$enumTemplate.TypeName}} string
@@ -177,8 +180,10 @@ func (e *{{$enumTemplate.TypeName}}) Scan(value interface{}) error {
 		enumValue = val
 	case []byte:
 		enumValue = string(val)
+	case {{$enumTemplate.TypeName}}:
+		enumValue = val.String()
 	default:
-		return errors.New("jet: Invalid scan value for AllTypesEnum enum. Enum value has to be of type string or []byte")
+		return fmt.Errorf("jet: Invalid scan value for {{$enumTemplate.TypeName}} enum. Enum value has to be of type string or []byte but is type %T", value)
 	}
 
 	switch enumValue {
