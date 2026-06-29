@@ -5,12 +5,18 @@ import (
 	"fmt"
 	"github.com/go-jet/jet/v2/internal/utils/must"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"reflect"
 )
 
 // QueryablePgxV5 interface for pgx Query method
 type QueryablePgxV5 interface {
 	Query(ctx context.Context, query string, args ...any) (pgx.Rows, error)
+}
+
+// ExecutablePgxV5 interface for pgx Exec method
+type ExecutablePgxV5 interface {
+	Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error)
 }
 
 // QueryJsonObjPgxV5 executes a SQL query that returns a JSON object, unmarshals the result into the provided destination,
@@ -126,7 +132,12 @@ func queryToSlicePgxV5(ctx context.Context, db QueryablePgxV5, query string, arg
 	if err != nil {
 		return
 	}
-	defer rows.Close()
+	defer func() {
+		rows.Close()
+		if err == nil {
+			err = rows.Err()
+		}
+	}()
 
 	scanContext, err := NewScanContextPGXv5(rows)
 
@@ -156,9 +167,8 @@ func queryToSlicePgxV5(ctx context.Context, db QueryablePgxV5, query string, arg
 		}
 	}
 
-	rows.Close()
-
-	return scanContext.rowNum, rows.Err()
+	rowsProcessed = scanContext.rowNum
+	return
 }
 
 func queryJsonPgxV5(ctx context.Context, db QueryablePgxV5, query string, args []interface{}, destPtr interface{}) (rowsProcessed int64, err error) {
