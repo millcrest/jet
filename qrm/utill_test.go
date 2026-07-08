@@ -1,6 +1,7 @@
 package qrm
 
 import (
+	"encoding/json"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"reflect"
@@ -78,4 +79,73 @@ func TestTryAssign(t *testing.T) {
 	// string to string
 	require.NoError(t, tryAssign(reflect.ValueOf(str), testValue.FieldByName("Str")))
 	require.Equal(t, str, destination.Str)
+}
+
+func TestTryAssignJSONValueToByteSlice(t *testing.T) {
+	destination := struct {
+		Raw []byte
+	}{}
+	testValue := reflect.ValueOf(&destination).Elem()
+
+	source := map[string]any{
+		"ids": []any{"one", "two"},
+	}
+
+	require.NoError(t, tryAssign(reflect.ValueOf(source), testValue.FieldByName("Raw")))
+	require.JSONEq(t, `{"ids":["one","two"]}`, string(destination.Raw))
+}
+
+func TestTryAssignJSONArrayToByteSlice(t *testing.T) {
+	destination := struct {
+		Raw []byte
+	}{}
+	testValue := reflect.ValueOf(&destination).Elem()
+
+	source := []any{"one", float64(2)}
+
+	require.NoError(t, tryAssign(reflect.ValueOf(source), testValue.FieldByName("Raw")))
+	require.JSONEq(t, `["one",2]`, string(destination.Raw))
+}
+
+func TestTryAssignClonesByteSlice(t *testing.T) {
+	destination := struct {
+		Raw []byte
+	}{}
+	testValue := reflect.ValueOf(&destination).Elem()
+	source := []byte(`{"ids":["one"]}`)
+
+	require.NoError(t, tryAssign(reflect.ValueOf(source), testValue.FieldByName("Raw")))
+	source[0] = '['
+
+	require.JSONEq(t, `{"ids":["one"]}`, string(destination.Raw))
+}
+
+func TestAssignJSONValueToMap(t *testing.T) {
+	destination := struct {
+		Labels map[string][]string
+	}{}
+	testValue := reflect.ValueOf(&destination).Elem()
+
+	source := map[string]any{
+		"project": []any{"alpha", "beta"},
+	}
+
+	require.NoError(t, assignJSONValue(reflect.ValueOf(source), testValue.FieldByName("Labels")))
+	require.Equal(t, map[string][]string{
+		"project": {"alpha", "beta"},
+	}, destination.Labels)
+}
+
+func TestAssignJSONRawMessageToMap(t *testing.T) {
+	destination := struct {
+		Labels map[string][]string
+	}{}
+	testValue := reflect.ValueOf(&destination).Elem()
+
+	source := json.RawMessage(`{"project":["alpha","beta"]}`)
+
+	require.NoError(t, assignJSONValue(reflect.ValueOf(source), testValue.FieldByName("Labels")))
+	require.Equal(t, map[string][]string{
+		"project": {"alpha", "beta"},
+	}, destination.Labels)
 }

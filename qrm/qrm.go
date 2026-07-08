@@ -430,10 +430,7 @@ func mapRowToStruct(
 			case implementsScanner:
 				initializeValueIfNilPtr(fieldValue)
 				value := scannedValue.Interface()
-
-				if pgxUUIDPatch(fieldValue, scannedValue) {
-					continue
-				}
+				value = normalizeScannerValue(value)
 
 				if valuer, ok := value.(driver.Valuer); ok {
 					value, err = valuer.Value()
@@ -451,18 +448,9 @@ func mapRowToStruct(
 					return updated, qrmAssignError(scannedValue, field, err)
 				}
 			case jsonUnmarshal:
-				value, ok := scannedValue.Interface().([]byte)
-
-				if !ok {
-					return updated, qrmAssignError(scannedValue, field, fmt.Errorf("value not convertable to []byte"))
-				}
-
-				fieldInterface := fieldValue.Addr().Interface()
-
-				err := json.Unmarshal(value, fieldInterface)
-
+				err := assignJSONValue(scannedValue, fieldValue)
 				if err != nil {
-					return updated, qrmAssignError(scannedValue, field, fmt.Errorf("invalid json, %w", err))
+					return updated, qrmAssignError(scannedValue, field, err)
 				}
 			default: // simple type
 				err := assign(scannedValue, fieldValue)
@@ -482,23 +470,15 @@ func qrmAssignError(scannedValue reflect.Value, field reflect.StructField, err e
 		field.Name, field.Type.String(), err)
 }
 
-var uuidLikeType = reflect.TypeOf([16]byte{})
-
-func pgxUUIDPatch(fieldValue, value reflect.Value) bool {
-	fieldValue = reflect.Indirect(fieldValue)
-	value = reflect.Indirect(value)
-
-	if fieldValue.Type() != uuidLikeType && value.Type() != uuidLikeType {
-		return false
+func normalizeScannerValue(value any) any {
+	switch typedValue := value.(type) {
+	case [16]byte:
+		bytes := make([]byte, len(typedValue))
+		copy(bytes, typedValue[:])
+		return bytes
+	default:
+		return value
 	}
-
-	if !fieldValue.CanSet() {
-		return false
-	}
-
-	fieldValue.Set(value)
-
-	return true
 }
 
 func mapRowToDestinationValue(

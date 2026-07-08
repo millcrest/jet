@@ -134,6 +134,91 @@ WHERE all_types.uuid = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'::uuid;
 	testutils.AssertDeepEqual(t, result.UUIDPtr, testutils.UUIDPtr("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11"))
 }
 
+func TestPGXNullUUIDType(t *testing.T) {
+	id := uuid.MustParse("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11")
+
+	stmt := SELECT(
+		UUID(id).AS("uuid_ptr"),
+		RawString("NULL::uuid").AS("uuid_null"),
+	)
+
+	var result struct {
+		UUIDPtr  uuid.NullUUID
+		UUIDNull uuid.NullUUID
+	}
+
+	err := pgxV5.Query(ctx, stmt, pgxPool, &result)
+	require.NoError(t, err)
+	requireLogged(t, stmt)
+
+	require.True(t, result.UUIDPtr.Valid)
+	require.Equal(t, id, result.UUIDPtr.UUID)
+	require.False(t, result.UUIDNull.Valid)
+	require.Equal(t, uuid.Nil, result.UUIDNull.UUID)
+}
+
+func TestPGXJSONMapField(t *testing.T) {
+	stmt := SELECT(
+		Json(`{"project":["alpha","beta"],"user":["one"]}`).AS("metadata"),
+	)
+
+	var result struct {
+		Metadata map[string][]string
+	}
+
+	err := pgxV5.Query(ctx, stmt, pgxPool, &result)
+	require.NoError(t, err)
+	requireLogged(t, stmt)
+
+	require.Equal(t, map[string][]string{
+		"project": {"alpha", "beta"},
+		"user":    {"one"},
+	}, result.Metadata)
+}
+
+func TestPGXJSONByteSliceFields(t *testing.T) {
+	stmt := SELECT(
+		Int32(7).AS("workflow_count"),
+		Double(13.75).AS("credits_spent"),
+		Json(`["execution-1","execution-2"]`).AS("function_workflow_execution_ids"),
+		Json(`[4,5]`).AS("function_workflow_count"),
+		Json(`[1.25,2.5]`).AS("function_credits_spent"),
+		Text("org_1").AS("organisation_id"),
+		Text("Acme").AS("organisation_name"),
+	)
+
+	var dest []struct {
+		WorkflowCount                int32
+		CreditsSpent                 float64
+		FunctionWorkflowExecutionIds []byte
+		FunctionWorkflowCount        []byte
+		FunctionCreditsSpent         []byte
+		OrganisationID               string
+		OrganisationName             string
+
+		ProjectID   *string
+		ProjectName *string
+		IconName    *string
+		IconColor   *string
+		Username    *string
+		Email       *string
+		UserID      *string
+	}
+
+	err := pgxV5.Query(ctx, stmt, pgxPool, &dest)
+	require.NoError(t, err)
+	requireLogged(t, stmt)
+	require.Len(t, dest, 1)
+
+	require.Equal(t, int32(7), dest[0].WorkflowCount)
+	require.Equal(t, 13.75, dest[0].CreditsSpent)
+	require.JSONEq(t, `["execution-1","execution-2"]`, string(dest[0].FunctionWorkflowExecutionIds))
+	require.JSONEq(t, `[4,5]`, string(dest[0].FunctionWorkflowCount))
+	require.JSONEq(t, `[1.25,2.5]`, string(dest[0].FunctionCreditsSpent))
+	require.Equal(t, "org_1", dest[0].OrganisationID)
+	require.Equal(t, "Acme", dest[0].OrganisationName)
+}
+
 func TestPGXScannerType(t *testing.T) {
 
 	type floats struct {

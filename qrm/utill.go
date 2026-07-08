@@ -214,6 +214,10 @@ func tryAssign(source, destination reflect.Value) error {
 		return nil
 	}
 
+	if destination.Type() == byteArrayType {
+		return assignJSONBytes(source, destination)
+	}
+
 	sourceInterface := source.Interface()
 
 	switch destination.Type().Kind() {
@@ -295,6 +299,103 @@ func tryAssign(source, destination reflect.Value) error {
 	}
 
 	return nil
+}
+
+func assignJSONValue(source, destination reflect.Value) error {
+	if destination.Kind() == reflect.Ptr {
+		if destination.IsNil() {
+			initializeValueIfNilPtr(destination)
+		}
+
+		destination = destination.Elem()
+	}
+
+	if assignIfAssignable(source, destination) {
+		return nil
+	}
+
+	if destination.Type() == byteArrayType {
+		return assignJSONBytes(source, destination)
+	}
+
+	data, err := jsonBytesFromValue(source)
+	if err != nil {
+		return err
+	}
+
+	err = json.Unmarshal(data, destination.Addr().Interface())
+	if err != nil {
+		return fmt.Errorf("invalid json, %w", err)
+	}
+
+	return nil
+}
+
+func assignJSONBytes(source, destination reflect.Value) error {
+	data, err := jsonEncodedBytesFromValue(source)
+	if err != nil {
+		return err
+	}
+
+	destination.SetBytes(cloneBytes(data))
+	return nil
+}
+
+func jsonEncodedBytesFromValue(value reflect.Value) ([]byte, error) {
+	for value.Kind() == reflect.Interface || value.Kind() == reflect.Ptr {
+		if value.IsNil() {
+			return nil, nil
+		}
+		value = value.Elem()
+	}
+
+	switch typedValue := value.Interface().(type) {
+	case []byte:
+		return cloneBytes(typedValue), nil
+	case json.RawMessage:
+		return cloneBytes([]byte(typedValue)), nil
+	}
+
+	switch value.Kind() {
+	case reflect.Map, reflect.Slice, reflect.Bool, reflect.String,
+		reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
+		reflect.Float32, reflect.Float64:
+	default:
+		return nil, fmt.Errorf("value not convertable to json bytes")
+	}
+
+	data, err := json.Marshal(value.Interface())
+	if err != nil {
+		return nil, fmt.Errorf("value not convertable to json bytes: %w", err)
+	}
+
+	return data, nil
+}
+
+func jsonBytesFromValue(value reflect.Value) ([]byte, error) {
+	for value.Kind() == reflect.Interface || value.Kind() == reflect.Ptr {
+		if value.IsNil() {
+			return nil, nil
+		}
+		value = value.Elem()
+	}
+
+	switch typedValue := value.Interface().(type) {
+	case []byte:
+		return cloneBytes(typedValue), nil
+	case json.RawMessage:
+		return cloneBytes([]byte(typedValue)), nil
+	case string:
+		return []byte(typedValue), nil
+	}
+
+	data, err := json.Marshal(value.Interface())
+	if err != nil {
+		return nil, fmt.Errorf("value not convertable to json bytes: %w", err)
+	}
+
+	return data, nil
 }
 
 func tryConvert(source, destination reflect.Value) bool {

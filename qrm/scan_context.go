@@ -213,10 +213,14 @@ func (s *ScanContext) getTypeInfo(structType reflect.Type, parentField *reflect.
 			rowIndex: columnIndex,
 		}
 
+		fieldType := indirectType(field.Type)
+
 		if jsonUnmarshaler {
 			fieldMap.Type = jsonUnmarshal
 		} else if implementsScannerType(field.Type) {
 			fieldMap.Type = implementsScanner
+		} else if fieldType.Kind() == reflect.Map {
+			fieldMap.Type = jsonUnmarshal
 		} else if !isSimpleModelType(field.Type) {
 			fieldMap.Type = complexType
 		} else {
