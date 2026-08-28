@@ -129,7 +129,6 @@ func queryToSlicePgxV5(ctx context.Context, db QueryablePgxV5, query string, arg
 	}
 
 	rows, err := db.Query(ctx, query, args...)
-
 	if err != nil {
 		return 0, err
 	}
@@ -141,7 +140,8 @@ func queryToSlicePgxV5(ctx context.Context, db QueryablePgxV5, query string, arg
 	}
 
 	if len(scanContext.row) == 0 {
-		return 0, nil
+		rows.Close()
+		return 0, rows.Err()
 	}
 
 	slicePtrValue := reflect.ValueOf(slicePtr)
