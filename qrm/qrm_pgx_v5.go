@@ -123,7 +123,7 @@ func QueryPgxV5(ctx context.Context, db QueryablePgxV5, query string, args []int
 	}
 }
 
-func queryToSlicePgxV5(ctx context.Context, db QueryablePgxV5, query string, args []interface{}, slicePtr interface{}) (rowsProcessed int64, err error) {
+func queryToSlicePgxV5(ctx context.Context, db QueryablePgxV5, query string, args []interface{}, slicePtr interface{}) (int64, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -131,25 +131,23 @@ func queryToSlicePgxV5(ctx context.Context, db QueryablePgxV5, query string, arg
 	rows, err := db.Query(ctx, query, args...)
 
 	if err != nil {
-		return
+		return 0, err
 	}
 	defer rows.Close()
 
 	scanContext, err := NewScanContextPGXv5(rows)
-
 	if err != nil {
-		return
+		return 0, err
 	}
 
 	if len(scanContext.row) == 0 {
-		return
+		return 0, nil
 	}
 
 	slicePtrValue := reflect.ValueOf(slicePtr)
 
 	for rows.Next() {
 		err = rows.Scan(scanContext.row...)
-
 		if err != nil {
 			return scanContext.rowNum, err
 		}
@@ -157,7 +155,6 @@ func queryToSlicePgxV5(ctx context.Context, db QueryablePgxV5, query string, arg
 		scanContext.rowNum++
 
 		_, err = mapRowToSlice(scanContext, "", slicePtrValue, nil)
-
 		if err != nil {
 			return scanContext.rowNum, err
 		}
