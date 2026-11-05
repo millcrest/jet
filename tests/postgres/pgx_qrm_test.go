@@ -6,6 +6,7 @@ package postgres
 // map identically to database/sql rows.
 
 import (
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -41,6 +42,28 @@ func TestPgxParityAllTypes(t *testing.T) {
 
 	for name, conn := range map[string]qrm.QueryablePgxV5{"pgx.Conn": pgxConn, "pgxpool.Pool": pgxPool} {
 		t.Run(name, func(t *testing.T) {
+			var actual []model.AllTypes
+			require.NoError(t, pgxV5.Query(ctx, stmt, conn, &actual))
+			testutils.AssertDeepEqual(t, actual, expected, timeEqual)
+		})
+	}
+
+	// Simple protocol receives every column in text format, including intrinsic types (int, bool, timestamp...).
+	for _, mode := range []pgx.QueryExecMode{
+		pgx.QueryExecModeCacheDescribe,
+		pgx.QueryExecModeDescribeExec,
+		pgx.QueryExecModeExec,
+		pgx.QueryExecModeSimpleProtocol,
+	} {
+		t.Run(mode.String(), func(t *testing.T) {
+			config, err := pgx.ParseConfig(getConnectionString())
+			require.NoError(t, err)
+			config.DefaultQueryExecMode = mode
+
+			conn, err := pgx.ConnectConfig(ctx, config)
+			require.NoError(t, err)
+			defer conn.Close(ctx)
+
 			var actual []model.AllTypes
 			require.NoError(t, pgxV5.Query(ctx, stmt, conn, &actual))
 			testutils.AssertDeepEqual(t, actual, expected, timeEqual)
@@ -89,7 +112,9 @@ func TestPgxScanPgxTypedDestination(t *testing.T) {
 		ORDER_BY(table.AllTypes.Serial)
 
 	var dest []AllTypes
-	require.NoError(t, pgxV5.Query(ctx, stmt, pgxPool, &dest))
+	allowUnusedColumns(func() { // destination maps a subset of all_types columns
+		require.NoError(t, pgxV5.Query(ctx, stmt, pgxPool, &dest))
+	})
 	require.Len(t, dest, 2)
 
 	id := uuid.MustParse("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11")
@@ -539,4 +564,54 @@ func TestPgxUpdateModelWithPgxTypes(t *testing.T) {
 			require.Equal(t, int64(0), result.RowsAffected())
 		})
 	})
+}
+
+// Intrinsic types are received in binary format and must produce the same values as the pgx stdlib driver,
+// including NULLs, infinite timestamps/dates and integer/float widths.
+func TestPgxScanIntrinsicEdgeValues(t *testing.T) {
+	stmt := SELECT(
+		Raw("'infinity'::timestamp").AS("edge.ts_inf"),
+		Raw("'-infinity'::timestamptz").AS("edge.tstz_neg_inf"),
+		Raw("'infinity'::date").AS("edge.date_inf"),
+		Raw("NULL::timestamptz").AS("edge.tstz_null"),
+		Raw("'2024-02-29 13:14:15.123456+08'::timestamptz").AS("edge.tstz"),
+		Raw("32767::int2").AS("edge.i2"),
+		Raw("(-2147483648)::int4").AS("edge.i4"),
+		Raw("9223372036854775807::int8").AS("edge.i8"),
+		Raw("NULL::int8").AS("edge.i8_null"),
+		Raw("1.5::float4").AS("edge.f4"),
+		Raw("'NaN'::float8").AS("edge.f8_nan"),
+		Raw("false").AS("edge.b"),
+	)
+
+	type edge struct {
+		TsInf      string
+		TstzNegInf string
+		DateInf    string
+		TstzNull   *time.Time
+		Tstz       time.Time
+		I2         int16
+		I4         int32
+		I8         int64
+		I8Null     *int64
+		F4         float32
+		F8Nan      string
+		B          bool
+	}
+
+	pgxStdlibDB, err := sql.Open("pgx", getConnectionString())
+	require.NoError(t, err)
+	defer pgxStdlibDB.Close()
+
+	var expected, actual edge
+	require.NoError(t, stmt.QueryContext(ctx, pgxStdlibDB, &expected))
+	require.NoError(t, pgxV5.Query(ctx, stmt, pgxConn, &actual))
+
+	require.Equal(t, "infinity", actual.TsInf)
+	require.Equal(t, "-infinity", actual.TstzNegInf)
+	require.Equal(t, "infinity", actual.DateInf)
+	require.Nil(t, actual.TstzNull)
+	require.Nil(t, actual.I8Null)
+	require.Equal(t, int64(9223372036854775807), actual.I8)
+	testutils.AssertDeepEqual(t, actual, expected, timeEqual)
 }

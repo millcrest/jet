@@ -1,8 +1,8 @@
 package qrm
 
 import (
-	"bytes"
 	"context"
+	"database/sql/driver"
 	"fmt"
 	"github.com/go-jet/jet/v2/internal/utils/must"
 	"github.com/jackc/pgx/v5"
@@ -141,18 +141,14 @@ func queryToSlicePgxV5(ctx context.Context, db QueryablePgxV5, query string, arg
 		}
 	}()
 
-	scanContext, err := NewScanContextPGXv5(rows)
-
-	if err != nil {
-		return
-	}
+	scanContext := newScanContextPgxV5(rows)
 
 	if len(scanContext.row) == 0 {
 		return
 	}
 
 	slicePtrValue := reflect.ValueOf(slicePtr)
-	scanTargets := newPgxScanTargets(scanContext.row)
+	scanTargets := newPgxScanTargets(scanContext.row, rows.FieldDescriptions())
 
 	for rows.Next() {
 		err = rows.Scan(scanTargets...)
@@ -168,10 +164,24 @@ func queryToSlicePgxV5(ctx context.Context, db QueryablePgxV5, query string, arg
 		if err != nil {
 			return scanContext.rowNum, err
 		}
+
+		if scanContext.rowNum == 1 {
+			scanContext.ensureStrictness()
+		}
 	}
 
 	rowsProcessed = scanContext.rowNum
 	return
+}
+
+func newScanContextPgxV5(rows pgx.Rows) *ScanContext {
+	fields := rows.FieldDescriptions()
+	aliases := make([]string, len(fields))
+	for i, field := range fields {
+		aliases[i] = field.Name
+	}
+
+	return newScanContext(aliases)
 }
 
 func queryJsonPgxV5(ctx context.Context, db QueryablePgxV5, query string, args []interface{}, destPtr interface{}) (rowsProcessed int64, err error) {
@@ -221,29 +231,134 @@ func queryJsonPgxV5(ctx context.Context, db QueryablePgxV5, query string, args [
 }
 
 // pgxDriverValue is a pgx scan target that implements sql.Scanner. For sql.Scanner targets pgx decodes the
-// column with Codec.DecodeDatabaseSQLValue, producing the same database/sql compatible values (string, []byte,
-// int64, float64, bool, time.Time) as the pgx stdlib driver, instead of pgx native Go types
-// (map[string]any for json, [16]byte for uuid, []any for arrays, pgtype.Numeric, ...). This allows QRM
-// to map pgx rows exactly like database/sql rows.
+// column with Codec.DecodeDatabaseSQLValue, producing the same database/sql compatible values (int64, float64, bool,
+// time.Time, []byte) as the pgx stdlib driver, instead of pgx native Go types (map[string]any for json, [16]byte for
+// uuid, []any for arrays, pgtype.Numeric, ...). pgx codecs return []byte values that are already copied out of the
+// row buffer, so the value can be retained after the next row is read.
 type pgxDriverValue struct {
 	dest *interface{}
 }
 
 func (v *pgxDriverValue) Scan(src any) error {
-	if b, ok := src.([]byte); ok {
-		src = bytes.Clone(b) // pgx reuses row buffers between rows
-	}
 	*v.dest = src
 	return nil
 }
 
-func newPgxScanTargets(row []interface{}) []interface{} {
+// pgxTextValue is a pgx scan target that implements pgtype.TextScanner. pgx passes text format values to it
+// undecoded, so non-intrinsic types (numeric, uuid, interval, arrays, enums, extension types...) reach QRM as the
+// exact text postgres sent, the same as the pgx stdlib and lib/pq drivers, without being parsed and re-formatted.
+type pgxTextValue struct {
+	pgxDriverValue
+}
+
+func (v *pgxTextValue) ScanText(text pgtype.Text) error {
+	if !text.Valid {
+		*v.dest = nil
+		return nil
+	}
+	*v.dest = text.String
+	return nil
+}
+
+// pgxIntValue, pgxFloatValue, pgxBoolValue, pgxTimestampValue, pgxTimestamptzValue and pgxDateValue receive
+// intrinsic types through pgx typed scanner interfaces, the same way the pgx stdlib driver scans them, and produce
+// the same database/sql values. They avoid the generic Codec.DecodeDatabaseSQLValue path, which re-plans and boxes
+// every value.
+//
+// All scan targets embed pgxDriverValue, so they are also sql.Scanner. pgx always prefers the typed scanner
+// interfaces, but pgx.Rows implementations that only understand sql.Scanner (test doubles, wrappers) keep working.
+type pgxIntValue struct{ pgxDriverValue }
+
+func (v *pgxIntValue) ScanInt64(n pgtype.Int8) error {
+	return setPgxValue(v.dest, n.Int64, n.Valid)
+}
+
+type pgxFloatValue struct{ pgxDriverValue }
+
+func (v *pgxFloatValue) ScanFloat64(f pgtype.Float8) error {
+	return setPgxValue(v.dest, f.Float64, f.Valid)
+}
+
+type pgxBoolValue struct{ pgxDriverValue }
+
+func (v *pgxBoolValue) ScanBool(b pgtype.Bool) error {
+	return setPgxValue(v.dest, b.Bool, b.Valid)
+}
+
+type pgxTimestampValue struct{ pgxDriverValue }
+
+func (v *pgxTimestampValue) ScanTimestamp(ts pgtype.Timestamp) error {
+	return setPgxValuer(v.dest, ts)
+}
+
+type pgxTimestamptzValue struct{ pgxDriverValue }
+
+func (v *pgxTimestamptzValue) ScanTimestamptz(ts pgtype.Timestamptz) error {
+	return setPgxValuer(v.dest, ts)
+}
+
+type pgxDateValue struct{ pgxDriverValue }
+
+func (v *pgxDateValue) ScanDate(d pgtype.Date) error {
+	return setPgxValuer(v.dest, d)
+}
+
+func setPgxValue[T any](dest *interface{}, value T, valid bool) error {
+	if !valid {
+		*dest = nil
+		return nil
+	}
+	*dest = value
+	return nil
+}
+
+func setPgxValuer(dest *interface{}, valuer driver.Valuer) (err error) {
+	*dest, err = valuer.Value() // nil for NULL, string for infinity, otherwise time.Time
+	return err
+}
+
+// newPgxScanTargets creates, once per result set, a scan target for each column of the row.
+func newPgxScanTargets(row []interface{}, fields []pgconn.FieldDescription) []interface{} {
 	targets := make([]interface{}, len(row))
 	for i := range row {
-		targets[i] = &pgxDriverValue{dest: row[i].(*interface{})}
+		dest := row[i].(*interface{})
+
+		if i >= len(fields) {
+			targets[i] = &pgxDriverValue{dest: dest}
+			continue
+		}
+
+		switch oid := fields[i].DataTypeOID; {
+		case oid == pgtype.Int2OID || oid == pgtype.Int4OID || oid == pgtype.Int8OID:
+			targets[i] = &pgxIntValue{pgxDriverValue{dest: dest}}
+		case oid == pgtype.Float4OID || oid == pgtype.Float8OID:
+			targets[i] = &pgxFloatValue{pgxDriverValue{dest: dest}}
+		case oid == pgtype.BoolOID:
+			targets[i] = &pgxBoolValue{pgxDriverValue{dest: dest}}
+		case oid == pgtype.TimestampOID:
+			targets[i] = &pgxTimestampValue{pgxDriverValue{dest: dest}}
+		case oid == pgtype.TimestamptzOID:
+			targets[i] = &pgxTimestamptzValue{pgxDriverValue{dest: dest}}
+		case oid == pgtype.DateOID:
+			targets[i] = &pgxDateValue{pgxDriverValue{dest: dest}}
+		case fields[i].Format == pgtype.TextFormatCode && !pgxDecodedOIDs[oid]:
+			targets[i] = &pgxTextValue{pgxDriverValue{dest: dest}}
+		default:
+			targets[i] = &pgxDriverValue{dest: dest}
+		}
 	}
 	return targets
 }
+
+// pgxDecodedOIDs are types decoded by pgx codecs even when received in text format (for instance when the simple
+// protocol is used): intrinsic types become int64, float64, bool, time.Time or []byte, and json becomes []byte.
+var pgxDecodedOIDs = func() map[uint32]bool {
+	oids := map[uint32]bool{pgtype.JSONOID: true, pgtype.JSONBOID: true}
+	for oid := range pgxResultFormats {
+		oids[oid] = true
+	}
+	return oids
+}()
 
 // pgxResultFormats mirrors pgx stdlib (database/sql) driver: only intrinsic types are received in binary format,
 // every other type (arrays, json, uuid, numeric, enums, extension types...) is received in text format, the same way

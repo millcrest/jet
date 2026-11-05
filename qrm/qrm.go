@@ -3,7 +3,6 @@ package qrm
 import (
 	"context"
 	"database/sql"
-	"database/sql/driver"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -429,21 +428,9 @@ func mapRowToStruct(
 			switch fieldMappingInfo.Type {
 			case implementsScanner:
 				initializeValueIfNilPtr(fieldValue)
-				value := scannedValue.Interface()
-
-				if pgxUUIDPatch(fieldValue, scannedValue) {
-					continue
-				}
-
-				if valuer, ok := value.(driver.Valuer); ok {
-					value, err = valuer.Value()
-
-					if err != nil {
-						return updated, err
-					}
-				}
-
 				fieldScanner := getScanner(fieldValue)
+
+				value := scannedValue.Interface()
 
 				err := fieldScanner.Scan(value)
 
@@ -480,25 +467,6 @@ func mapRowToStruct(
 func qrmAssignError(scannedValue reflect.Value, field reflect.StructField, err error) error {
 	return fmt.Errorf(`can't assign %T(%q) to '%s %s': %w`, scannedValue.Interface(), scannedValue.Interface(),
 		field.Name, field.Type.String(), err)
-}
-
-var uuidLikeType = reflect.TypeOf([16]byte{})
-
-func pgxUUIDPatch(fieldValue, value reflect.Value) bool {
-	fieldValue = reflect.Indirect(fieldValue)
-	value = reflect.Indirect(value)
-
-	if fieldValue.Type() != uuidLikeType && value.Type() != uuidLikeType {
-		return false
-	}
-
-	if !fieldValue.CanSet() {
-		return false
-	}
-
-	fieldValue.Set(value)
-
-	return true
 }
 
 func mapRowToDestinationValue(
