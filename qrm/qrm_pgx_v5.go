@@ -1,11 +1,13 @@
 package qrm
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"github.com/go-jet/jet/v2/internal/utils/must"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 	"reflect"
 )
 
@@ -127,7 +129,7 @@ func queryToSlicePgxV5(ctx context.Context, db QueryablePgxV5, query string, arg
 		ctx = context.Background()
 	}
 
-	rows, err := db.Query(ctx, query, args...)
+	rows, err := db.Query(ctx, query, withPgxResultFormats(args)...)
 
 	if err != nil {
 		return
@@ -150,9 +152,10 @@ func queryToSlicePgxV5(ctx context.Context, db QueryablePgxV5, query string, arg
 	}
 
 	slicePtrValue := reflect.ValueOf(slicePtr)
+	scanTargets := newPgxScanTargets(scanContext.row)
 
 	for rows.Next() {
-		err = rows.Scan(scanContext.row...)
+		err = rows.Scan(scanTargets...)
 
 		if err != nil {
 			return scanContext.rowNum, err
@@ -215,4 +218,52 @@ func queryJsonPgxV5(ctx context.Context, db QueryablePgxV5, query string, args [
 	rows.Close()
 
 	return 1, nil
+}
+
+// pgxDriverValue is a pgx scan target that implements sql.Scanner. For sql.Scanner targets pgx decodes the
+// column with Codec.DecodeDatabaseSQLValue, producing the same database/sql compatible values (string, []byte,
+// int64, float64, bool, time.Time) as the pgx stdlib driver, instead of pgx native Go types
+// (map[string]any for json, [16]byte for uuid, []any for arrays, pgtype.Numeric, ...). This allows QRM
+// to map pgx rows exactly like database/sql rows.
+type pgxDriverValue struct {
+	dest *interface{}
+}
+
+func (v *pgxDriverValue) Scan(src any) error {
+	if b, ok := src.([]byte); ok {
+		src = bytes.Clone(b) // pgx reuses row buffers between rows
+	}
+	*v.dest = src
+	return nil
+}
+
+func newPgxScanTargets(row []interface{}) []interface{} {
+	targets := make([]interface{}, len(row))
+	for i := range row {
+		targets[i] = &pgxDriverValue{dest: row[i].(*interface{})}
+	}
+	return targets
+}
+
+// pgxResultFormats mirrors pgx stdlib (database/sql) driver: only intrinsic types are received in binary format,
+// every other type (arrays, json, uuid, numeric, enums, extension types...) is received in text format, the same way
+// lib/pq receives them. Combined with pgxDriverValue, rows scanned through pgx are mapped exactly as database/sql rows.
+var pgxResultFormats = pgx.QueryResultFormatsByOID{
+	pgtype.BoolOID:        pgtype.BinaryFormatCode,
+	pgtype.ByteaOID:       pgtype.BinaryFormatCode,
+	pgtype.CIDOID:         pgtype.BinaryFormatCode,
+	pgtype.DateOID:        pgtype.BinaryFormatCode,
+	pgtype.Float4OID:      pgtype.BinaryFormatCode,
+	pgtype.Float8OID:      pgtype.BinaryFormatCode,
+	pgtype.Int2OID:        pgtype.BinaryFormatCode,
+	pgtype.Int4OID:        pgtype.BinaryFormatCode,
+	pgtype.Int8OID:        pgtype.BinaryFormatCode,
+	pgtype.OIDOID:         pgtype.BinaryFormatCode,
+	pgtype.TimestampOID:   pgtype.BinaryFormatCode,
+	pgtype.TimestamptzOID: pgtype.BinaryFormatCode,
+	pgtype.XIDOID:         pgtype.BinaryFormatCode,
+}
+
+func withPgxResultFormats(args []interface{}) []interface{} {
+	return append([]interface{}{pgxResultFormats}, args...)
 }
