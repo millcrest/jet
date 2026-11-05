@@ -3,7 +3,6 @@ package qrm
 import (
 	"database/sql"
 	"fmt"
-	"github.com/jackc/pgx/v5"
 	"reflect"
 	"strings"
 )
@@ -23,15 +22,6 @@ type ScanContext struct {
 	columnIndexRead []bool
 
 	unmappedFields []string
-}
-
-func NewScanContextPGXv5(rows pgx.Rows) (*ScanContext, error) {
-	var aliases []string
-	for _, fieldDesc := range rows.FieldDescriptions() {
-		aliases = append(aliases, fieldDesc.Name)
-	}
-
-	return newScanContext(aliases), nil
 }
 
 // NewScanContext creates new ScanContext from rows

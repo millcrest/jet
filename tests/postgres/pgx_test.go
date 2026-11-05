@@ -4,6 +4,7 @@ import (
 	"github.com/go-jet/jet/v2/internal/testutils"
 	"github.com/go-jet/jet/v2/pgxV5"
 	. "github.com/go-jet/jet/v2/postgres"
+	"github.com/go-jet/jet/v2/qrm"
 	model3 "github.com/go-jet/jet/v2/tests/.gentestdata/jetdb/dvds/model"
 	table3 "github.com/go-jet/jet/v2/tests/.gentestdata/jetdb/dvds/table"
 	. "github.com/go-jet/jet/v2/tests/.gentestdata/jetdb/northwind/table"
@@ -35,24 +36,6 @@ func init() {
 	}
 }
 
-func BenchmarkNorthwindJoinEverythingPgx(b *testing.B) {
-	for i := 0; i < b.N; i++ {
-		testNorthwindJoinEverythingCustomScan(b, func(stmt Statement, dest any) {
-			err := pgxV5.Query(ctx, stmt, pgxConn, dest)
-			require.NoError(b, err)
-		})
-	}
-}
-
-func BenchmarkNorthwindJoinEverythingPQ(b *testing.B) {
-	for i := 0; i < b.N; i++ {
-		testNorthwindJoinEverythingCustomScan(b, func(stmt Statement, dest any) {
-			err := stmt.Query(db, dest)
-			require.NoError(b, err)
-		})
-	}
-}
-
 func TestNorthwindJoinEverythingPQ(t *testing.T) {
 	testNorthwindJoinEverythingCustomScan(t, func(stmt Statement, dest any) {
 		err := stmt.Query(db, dest)
@@ -68,39 +51,7 @@ func TestNorthwindJoinEverythingPGX(t *testing.T) {
 }
 
 func testNorthwindJoinEverythingCustomScan(b require.TestingT, queryFunc func(statement Statement, dest any)) {
-	stmt :=
-		SELECT(
-			Customers.AllColumns,
-			CustomerDemographics.AllColumns,
-			Orders.AllColumns,
-			Shippers.AllColumns,
-			OrderDetails.AllColumns,
-			Products.AllColumns,
-			Categories.AllColumns,
-			Suppliers.AllColumns,
-			Employees.AllColumns,
-			Territories.AllColumns,
-			Region.AllColumns,
-		).FROM(
-			Customers.
-				LEFT_JOIN(CustomerCustomerDemo, Customers.CustomerID.EQ(CustomerCustomerDemo.CustomerID)).
-				LEFT_JOIN(CustomerDemographics, CustomerCustomerDemo.CustomerTypeID.EQ(CustomerDemographics.CustomerTypeID)).
-				LEFT_JOIN(Orders, Orders.CustomerID.EQ(Customers.CustomerID)).
-				LEFT_JOIN(Shippers, Orders.ShipVia.EQ(Shippers.ShipperID)).
-				LEFT_JOIN(OrderDetails, Orders.OrderID.EQ(OrderDetails.OrderID)).
-				LEFT_JOIN(Products, OrderDetails.ProductID.EQ(Products.ProductID)).
-				LEFT_JOIN(Categories, Products.CategoryID.EQ(Categories.CategoryID)).
-				LEFT_JOIN(Suppliers, Products.SupplierID.EQ(Suppliers.SupplierID)).
-				LEFT_JOIN(Employees, Orders.EmployeeID.EQ(Employees.EmployeeID)).
-				LEFT_JOIN(EmployeeTerritories, EmployeeTerritories.EmployeeID.EQ(Employees.EmployeeID)).
-				LEFT_JOIN(Territories, EmployeeTerritories.TerritoryID.EQ(Territories.TerritoryID)).
-				LEFT_JOIN(Region, Territories.RegionID.EQ(Region.RegionID)),
-		).ORDER_BY(
-			Customers.CustomerID,
-			Orders.OrderID,
-			Products.ProductID,
-			Territories.TerritoryID,
-		)
+	stmt := northwindJoinEverythingStmt()
 
 	var dest Dest
 
@@ -108,6 +59,41 @@ func testNorthwindJoinEverythingCustomScan(b require.TestingT, queryFunc func(st
 
 	testutils.AssertJSONFile(b, dest, "./testdata/results/postgres/northwind-all.json")
 	requireLogged(b, stmt)
+}
+
+func northwindJoinEverythingStmt() SelectStatement {
+	return SELECT(
+		Customers.AllColumns,
+		CustomerDemographics.AllColumns,
+		Orders.AllColumns,
+		Shippers.AllColumns,
+		OrderDetails.AllColumns,
+		Products.AllColumns,
+		Categories.AllColumns,
+		Suppliers.AllColumns,
+		Employees.AllColumns,
+		Territories.AllColumns,
+		Region.AllColumns,
+	).FROM(
+		Customers.
+			LEFT_JOIN(CustomerCustomerDemo, Customers.CustomerID.EQ(CustomerCustomerDemo.CustomerID)).
+			LEFT_JOIN(CustomerDemographics, CustomerCustomerDemo.CustomerTypeID.EQ(CustomerDemographics.CustomerTypeID)).
+			LEFT_JOIN(Orders, Orders.CustomerID.EQ(Customers.CustomerID)).
+			LEFT_JOIN(Shippers, Orders.ShipVia.EQ(Shippers.ShipperID)).
+			LEFT_JOIN(OrderDetails, Orders.OrderID.EQ(OrderDetails.OrderID)).
+			LEFT_JOIN(Products, OrderDetails.ProductID.EQ(Products.ProductID)).
+			LEFT_JOIN(Categories, Products.CategoryID.EQ(Categories.CategoryID)).
+			LEFT_JOIN(Suppliers, Products.SupplierID.EQ(Suppliers.SupplierID)).
+			LEFT_JOIN(Employees, Orders.EmployeeID.EQ(Employees.EmployeeID)).
+			LEFT_JOIN(EmployeeTerritories, EmployeeTerritories.EmployeeID.EQ(Employees.EmployeeID)).
+			LEFT_JOIN(Territories, EmployeeTerritories.TerritoryID.EQ(Territories.TerritoryID)).
+			LEFT_JOIN(Region, Territories.RegionID.EQ(Region.RegionID)),
+	).ORDER_BY(
+		Customers.CustomerID,
+		Orders.OrderID,
+		Products.ProductID,
+		Territories.TerritoryID,
+	)
 }
 
 func TestUUIDTypePGX(t *testing.T) {
@@ -144,7 +130,10 @@ func TestPGXScannerType(t *testing.T) {
 	}
 
 	query := SELECT(
-		table.Floats.AllColumns,
+		table.Floats.Numeric,
+		table.Floats.NumericPtr,
+		table.Floats.Decimal,
+		table.Floats.DecimalPtr,
 	).FROM(
 		table.Floats,
 	).WHERE(table.Floats.Decimal.EQ(Decimal("1.11111111111111111111")))
@@ -166,47 +155,25 @@ func TestPGXScannerType(t *testing.T) {
 }
 
 func TestAllTypesSelectPGX(t *testing.T) {
-	var dest []model2.AllTypes
-
-	stmt := SELECT(table.AllTypes.AllColumns.Except(
-		table.AllTypes.Decimal,
-		table.AllTypes.DecimalPtr,
-		table.AllTypes.Numeric,
-		table.AllTypes.NumericPtr,
-		table.AllTypes.PointPtr,
-		table.AllTypes.Bit,
-		table.AllTypes.BitPtr,
-		table.AllTypes.BitVarying,
-		table.AllTypes.BitVaryingPtr,
-		table.AllTypes.JSON,
-		table.AllTypes.JSONPtr,
-		table.AllTypes.Jsonb,
-		table.AllTypes.JsonbPtr,
-		table.AllTypes.JsonbArray,
-		table.AllTypes.TextArray,
-		table.AllTypes.TextArrayPtr,
-		table.AllTypes.TextMultiDimArray,
-		table.AllTypes.TextMultiDimArrayPtr,
-		table.AllTypes.Tsvector,
-		table.AllTypes.TsvectorPtr,
-		table.AllTypes.IntegerArray,
-		table.AllTypes.IntegerArrayPtr,
-		table.AllTypes.Interval,
-		table.AllTypes.IntervalPtr,
-
-		table.AllTypes.Time,
-		table.AllTypes.TimePtr,
-		table.AllTypes.Timez,
-		table.AllTypes.TimezPtr,
-		table.AllTypes.Mood,
-		table.AllTypes.MoodPtr,
-	)).FROM(
+	// The default generator model is scanned through pgx with no column exclusions and no pgtype customization.
+	stmt := SELECT(
+		table.AllTypes.AllColumns,
+	).FROM(
 		table.AllTypes,
 	).LIMIT(2)
 
-	err := pgxV5.Query(ctx, stmt, pgxConn, &dest)
-	require.NoError(t, err)
-	requireLogged(t, stmt)
+	for name, conn := range map[string]qrm.QueryablePgxV5{"conn": pgxConn, "pool": pgxPool} {
+		t.Run(name, func(t *testing.T) {
+			var dest []model2.AllTypes
+
+			err := pgxV5.Query(ctx, stmt, conn, &dest)
+			require.NoError(t, err)
+			requireLogged(t, stmt)
+
+			testutils.AssertDeepEqual(t, dest[0], allTypesRow0)
+			testutils.AssertDeepEqual(t, dest[1], allTypesRow1)
+		})
+	}
 }
 
 func TestSelectJsonObjectPgxV5(t *testing.T) {

@@ -59,7 +59,7 @@ func TestMain(m *testing.M) {
 
 	qrm.GlobalConfig.StrictScan = true
 
-	for _, driverName := range []string{"postgres"} {
+	for _, driverName := range []string{"postgres", "pgx"} {
 
 		fmt.Printf("\nRunning postgres tests for driver: %s, caching enabled: %t \n", driverName, withStatementCaching)
 

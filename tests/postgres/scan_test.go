@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"github.com/go-jet/jet/v2/internal/utils/ptr"
+	"github.com/go-jet/jet/v2/pgxV5"
 	"github.com/lib/pq"
 	"github.com/shopspring/decimal"
 	"gopkg.in/guregu/null.v4"
@@ -1188,6 +1189,14 @@ func TestStrictScan(t *testing.T) {
 
 	err := stmt.Query(db, &dest2)
 	require.NoError(t, err)
+
+	t.Run("pgxV5", func(t *testing.T) {
+		require.PanicsWithValue(t, "jet: columns never used: 'actor.last_name', 'actor.last_update'", func() {
+			var dest []Actor
+			err := pgxV5.Query(ctx, stmt, pgxConn, &dest)
+			require.NoError(t, err)
+		})
+	})
 
 	t.Run("using_rows", func(t *testing.T) {
 		rows, err := stmt.Rows(ctx, db)
